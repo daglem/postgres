@@ -292,15 +292,16 @@ test=# SELECT dmetaphone('gumbo');
   </para>
 
 <synopsis>
-daitch_mokotoff(text source) returns text
+daitch_mokotoff(text source) returns text[]
 </synopsis>
 
   <para>
    Since a Daitch-Mokotoff soundex code consists of only 6 digits,
    <literal>source</literal> should be preferably a single word or name.
-   Any alternative soundex codes are separated by space, which makes the returned
-   text suited for use in Full Text Search, see <xref linkend="textsearch"/> and
-   <xref linkend="functions-textsearch"/>.
+   The returned text array may be used directly in a GIN index, using the
+   <literal>&&</literal> operator for matching, see <xref linkend="gin"/>.
+   For more advanced queries, Full Text Search may be used, see
+   <xref linkend="textsearch"/>, and the example below.
   </para>
 
   <para>
@@ -308,17 +309,14 @@ daitch_mokotoff(text source) returns text
   </para>
 
 <programlisting>
-CREATE OR REPLACE FUNCTION soundex_name(v_name text) RETURNS text AS $$
-  SELECT string_agg(daitch_mokotoff(n), ' ')
+CREATE OR REPLACE FUNCTION soundex_tsvector(v_name text) RETURNS tsvector AS $$
+  SELECT to_tsvector('simple', string_agg(array_to_string(daitch_mokotoff(n), ' '), ' '))
   FROM regexp_split_to_table(v_name, '\s+') AS n
 $$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION soundex_tsvector(v_name text) RETURNS tsvector AS $$
-  SELECT to_tsvector('simple', soundex_name(v_name))
-$$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
-
 CREATE OR REPLACE FUNCTION soundex_tsquery(v_name text) RETURNS tsquery AS $$
-  SELECT to_tsquery('simple', quote_literal(soundex_name(v_name)))
+  SELECT string_agg('(' || array_to_string(daitch_mokotoff(n), '|') || ')', '&')::tsquery
+  FROM regexp_split_to_table(v_name, '\s+') AS n
 $$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Note that searches could be more efficient with the tsvector in a separate column

@@ -57,14 +57,15 @@
 
 #include "postgres.h"
 
-#include "lib/stringinfo.h"
+#include "catalog/pg_type.h"
 #include "mb/pg_wchar.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 
 
 /*
- * The soundex coding chart table is adapted from from
+ * The soundex coding chart table is adapted from
  * https://www.jewishgen.org/InfoFiles/Soundex.html
  * See daitch_mokotoff_header.pl for details.
 */
@@ -78,7 +79,7 @@
 struct dm_node
 {
 	int			soundex_length; /* Length of generated soundex code */
-	char		soundex[DM_CODE_DIGITS + 1];	/* Soundex code */
+	char		soundex[DM_CODE_DIGITS];	/* Soundex code */
 	int			is_leaf;		/* Candidate for complete soundex code */
 	int			last_update;	/* Letter number for last update of node */
 	char		code_digit;		/* Last code digit, 0 - 9 */
@@ -94,8 +95,8 @@ struct dm_node
 	/* ORed together code index(es) used to reach current node. */
 	int			prev_code_index;
 	int			next_code_index;
-	/* Nodes branching out from this node. */
-	struct dm_node *children[DM_MAX_ALTERNATE_CODES + 1];
+	/* Possible nodes branching out from this node - digits 0-9. */
+	struct dm_node *children[10];
 	/* Next node in linked list. Alternating index for each iteration. */
 	struct dm_node *next[2];
 };
@@ -104,7 +105,7 @@ typedef struct dm_node dm_node;
 
 
 /* Internal C implementation */
-static int	daitch_mokotoff_coding(char *word, StringInfo soundex);
+static int	daitch_mokotoff_coding(char *word, ArrayBuildState *soundex, MemoryContext tmp_ctx);
 
 
 PG_FUNCTION_INFO_V1(daitch_mokotoff);
@@ -114,40 +115,39 @@ daitch_mokotoff(PG_FUNCTION_ARGS)
 {
 	text	   *arg = PG_GETARG_TEXT_PP(0);
 	char	   *string;
-	StringInfoData soundex;
-	text	   *retval;
-	MemoryContext old_ctx,
+	ArrayBuildState *soundex;
+	Datum		retval;
+	MemoryContext mem_ctx,
 				tmp_ctx;
 
 	tmp_ctx = AllocSetContextCreate(CurrentMemoryContext,
 									"daitch_mokotoff temporary context",
 									ALLOCSET_DEFAULT_SIZES);
-	old_ctx = MemoryContextSwitchTo(tmp_ctx);
+	mem_ctx = MemoryContextSwitchTo(tmp_ctx);
 
 	string = pg_server_to_any(text_to_cstring(arg), VARSIZE_ANY_EXHDR(arg), PG_UTF8);
-	initStringInfo(&soundex);
+	soundex = initArrayResult(TEXTOID, tmp_ctx, false);
 
-	if (!daitch_mokotoff_coding(string, &soundex))
+	if (!daitch_mokotoff_coding(string, soundex, tmp_ctx))
 	{
 		/* No encodable characters in input. */
-		MemoryContextSwitchTo(old_ctx);
+		MemoryContextSwitchTo(mem_ctx);
 		MemoryContextDelete(tmp_ctx);
 		PG_RETURN_NULL();
 	}
 
-	string = pg_any_to_server(soundex.data, soundex.len, PG_UTF8);
-	MemoryContextSwitchTo(old_ctx);
-	retval = cstring_to_text(string);
+	retval = makeArrayResult(soundex, mem_ctx);
+	MemoryContextSwitchTo(mem_ctx);
 	MemoryContextDelete(tmp_ctx);
 
-	PG_RETURN_TEXT_P(retval);
+	return retval;
 }
 
 
 /* Template for new node in soundex code tree. */
 static const dm_node start_node = {
 	.soundex_length = 0,
-	.soundex = "000000 ",		/* Six digits + joining space */
+	.soundex = "000000",		/* Six digits */
 	.is_leaf = 0,
 	.last_update = 0,
 	.code_digit = '\0',
@@ -229,23 +229,19 @@ set_leaf(dm_node * first_node[2], dm_node * last_node[2], dm_node * node, int ix
 
 /* Find next node corresponding to code digit, or create a new node. */
 static dm_node *
-find_or_create_child_node(dm_node * parent, char code_digit, StringInfo soundex)
+find_or_create_child_node(dm_node * parent, char code_digit, ArrayBuildState *soundex, MemoryContext tmp_ctx)
 {
-	dm_node   **nodes;
-	dm_node    *node;
-	int			i;
+	int			i = code_digit - '0';
+	dm_node   **nodes = parent->children;
+	dm_node    *node = nodes[i];
 
-	for (nodes = parent->children, i = 0; (node = nodes[i]); i++)
+	if (node)
 	{
-		if (node->code_digit == code_digit)
-		{
-			/* Found existing child node. Skip completed nodes. */
-			return node->soundex_length < DM_CODE_DIGITS ? node : NULL;
-		}
+		/* Found existing child node. Skip completed nodes. */
+		return node->soundex_length < DM_CODE_DIGITS ? node : NULL;
 	}
 
 	/* Create new child node. */
-	Assert(i < DM_MAX_ALTERNATE_CODES);
 	node = palloc(sizeof(dm_node));
 	nodes[i] = node;
 
@@ -262,8 +258,12 @@ find_or_create_child_node(dm_node * parent, char code_digit, StringInfo soundex)
 	}
 	else
 	{
-		/* Append completed soundex code to soundex string. */
-		appendBinaryStringInfoNT(soundex, node->soundex, DM_CODE_DIGITS + 1);
+		/* Append completed soundex code to soundex array. */
+		accumArrayResult(soundex,
+						 PointerGetDatum(cstring_to_text_with_len(node->soundex, DM_CODE_DIGITS)),
+						 false,
+						 TEXTOID,
+						 tmp_ctx);
 		return NULL;
 	}
 }
@@ -274,7 +274,7 @@ static void
 update_node(dm_node * first_node[2], dm_node * last_node[2], dm_node * node, int ix_node,
 			int letter_no, int prev_code_index, int next_code_index,
 			const char *next_code_digits, int digit_no,
-			StringInfo soundex)
+			ArrayBuildState *soundex, MemoryContext tmp_ctx)
 {
 	int			i;
 	char		next_code_digit = next_code_digits[digit_no];
@@ -309,7 +309,7 @@ update_node(dm_node * first_node[2], dm_node * last_node[2], dm_node * node, int
 		 node->prev_code_digits[1]))
 	{
 		/* The code digit is different from one of the previous (i.e. added). */
-		node = find_or_create_child_node(node, next_code_digit, soundex);
+		node = find_or_create_child_node(node, next_code_digit, soundex, tmp_ctx);
 		if (node)
 		{
 			initialize_node(node, letter_no);
@@ -327,7 +327,7 @@ update_node(dm_node * first_node[2], dm_node * last_node[2], dm_node * node, int
 			update_node(first_node, last_node, dirty_nodes[i], ix_node,
 						letter_no, prev_code_index, next_code_index,
 						next_code_digits, digit_no,
-						soundex);
+						soundex, tmp_ctx);
 		}
 		else
 		{
@@ -342,7 +342,7 @@ update_node(dm_node * first_node[2], dm_node * last_node[2], dm_node * node, int
 static void
 update_leaves(dm_node * first_node[2], int *ix_node, int letter_no,
 			  const dm_codes * codes, const dm_codes * next_codes,
-			  StringInfo soundex)
+			  ArrayBuildState *soundex, MemoryContext tmp_ctx)
 {
 	int			i,
 				j,
@@ -390,7 +390,7 @@ update_leaves(dm_node * first_node[2], int *ix_node, int letter_no,
 				update_node(first_node, last_node, node, ix_node_next,
 							letter_no, prev_code_index, code_index,
 							code[code_index], 0,
-							soundex);
+							soundex, tmp_ctx);
 			}
 		}
 	}
@@ -528,9 +528,9 @@ read_letter(char *str, int *ix)
 }
 
 
-/* Generate all Daitch-Mokotoff soundex codes for word, separated by space. */
+/* Generate all Daitch-Mokotoff soundex codes for word. */
 static int
-daitch_mokotoff_coding(char *word, StringInfo soundex)
+daitch_mokotoff_coding(char *word, ArrayBuildState *soundex, MemoryContext tmp_ctx)
 {
 	int			i = 0;
 	int			letter_no = 0;
@@ -562,7 +562,7 @@ daitch_mokotoff_coding(char *word, StringInfo soundex)
 		/* Update leaf nodes. */
 		update_leaves(first_node, &ix_node, letter_no,
 					  codes, next_codes ? next_codes : end_codes,
-					  soundex);
+					  soundex, tmp_ctx);
 
 		codes = next_codes;
 		letter_no++;
@@ -571,12 +571,12 @@ daitch_mokotoff_coding(char *word, StringInfo soundex)
 	/* Append all remaining (incomplete) soundex codes. */
 	for (node = first_node[ix_node]; node; node = node->next[ix_node])
 	{
-		appendBinaryStringInfoNT(soundex, node->soundex, DM_CODE_DIGITS + 1);
+		accumArrayResult(soundex,
+						 PointerGetDatum(cstring_to_text_with_len(node->soundex, DM_CODE_DIGITS)),
+						 false,
+						 TEXTOID,
+						 tmp_ctx);
 	}
-
-	/* Terminate string at the final space. */
-	soundex->len--;
-	soundex->data[soundex->len] = '\0';
 
 	return 1;
 }

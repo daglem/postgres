@@ -38,29 +38,12 @@ open my $OUTPUT, '>', $output_file
 
 # Parse code table and generate tree for letter transitions.
 my %codes;
-my %alternates;
 my $table = [{}, [["","",""]]];
 while (<DATA>) {
 	chomp;
 	my ($letters, $codes) = split(/\s+/);
 	my @codes = map { [ split(/,/) ] } split(/\|/, $codes);
 
-	# Find alternate code transitions for calculation of storage.
-	# The first character ("start of a name") can never yield more than two alternate codes,
-	# and is not considered here.
-	if (@codes > 1) {
-		for my $j (1..2) {  # Codes for "before a vowel" and "any other"
-			for my $i (0..1) {  # Alternate codes
-				# Identical code digits for adjacent letters are collapsed.
-				# For each possible non-transition due to code digit
-				# collapsing, find all alternate transitions.
-				my ($present, $next) = ($codes[$i][$j], $codes[($i + 1)%2][$j]);
-				next if length($present) != 1;
-				$next = $present ne substr($next, 0, 1) ? substr($next, 0, 1) : substr($next, -1, 1);
-				$alternates{$present}{$next} = 1;
-			}
-		}
-	}
 	my $key = "codes_" . join("_or_", map { join("_", @$_) } @codes);
 	my $val = join(",\n", map { "\t{\n\t\t" . join(", ", map { "\"$_\"" } @$_) . "\n\t}" } @codes);
 	$codes{$key} = $val;
@@ -80,21 +63,6 @@ while (<DATA>) {
 	}
 }
 close(DATA);
-
-# Add alternates by following transitions to 'X' (not coded).
-my $alt_x = $alternates{"X"};
-delete $alt_x->{"X"};
-while (my ($k, $v) = each %alternates) {
-	if (delete $v->{"X"}) {
-		for my $x (keys %$alt_x) {
-			$v->{$x} = 1;
-		}
-	}
-}
-
-# Find the maximum number of alternate codes in one position.
-# Add two for any additional final code digit transitions.
-my $max_alt = (sort { $b <=> $a } (map { scalar keys %$_ } values %alternates))[0] + 2;
 
 print $OUTPUT <<EOF;
 /*
@@ -122,8 +90,6 @@ print $OUTPUT <<EOF;
  * ON AN "AS IS" BASIS, AND THE AUTHOR AND DISTRIBUTORS HAS NO OBLIGATIONS TO
  * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
  */
-
-#define DM_MAX_ALTERNATE_CODES $max_alt
 
 /* Coding chart table: Soundex codes */
 typedef char dm_code[2 + 1];	/* One or two sequential code digits + NUL */
