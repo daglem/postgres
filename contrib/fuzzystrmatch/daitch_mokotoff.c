@@ -140,7 +140,7 @@ daitch_mokotoff(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(mem_ctx);
 	MemoryContextDelete(tmp_ctx);
 
-	return retval;
+	PG_RETURN_DATUM(retval);
 }
 
 
