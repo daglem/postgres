@@ -299,7 +299,7 @@ daitch_mokotoff(text source) returns text[]
    Since a Daitch-Mokotoff soundex code consists of only 6 digits,
    <literal>source</literal> should be preferably a single word or name.
    The returned text array may be used directly in a GIN index, using the
-   <literal>&&</literal> operator for matching, see <xref linkend="gin"/>.
+   <literal>&amp;&amp;</literal> operator for matching, see <xref linkend="gin"/>.
    For more advanced queries, Full Text Search may be used, see
    <xref linkend="textsearch"/>, and the example below.
   </para>
@@ -315,7 +315,7 @@ CREATE OR REPLACE FUNCTION soundex_tsvector(v_name text) RETURNS tsvector AS $$
 $$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION soundex_tsquery(v_name text) RETURNS tsquery AS $$
-  SELECT string_agg('(' || array_to_string(daitch_mokotoff(n), '|') || ')', '&')::tsquery
+  SELECT string_agg('(' || array_to_string(daitch_mokotoff(n), '|') || ')', '&amp;')::tsquery
   FROM regexp_split_to_table(v_name, '\s+') AS n
 $$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
 
