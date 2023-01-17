@@ -104,10 +104,10 @@ SELECT * FROM s WHERE difference(s.nm, 'john') &gt; 2;
   </indexterm>
 
 <synopsis>
-levenshtein(text source, text target, int ins_cost, int del_cost, int sub_cost) returns int
-levenshtein(text source, text target) returns int
-levenshtein_less_equal(text source, text target, int ins_cost, int del_cost, int sub_cost, int max_d) returns int
-levenshtein_less_equal(text source, text target, int max_d) returns int
+levenshtein(source text, target text, ins_cost int, del_cost int, sub_cost int) returns int
+levenshtein(source text, target text) returns int
+levenshtein_less_equal(source text, target text, ins_cost int, del_cost int, sub_cost int, max_d int) returns int
+levenshtein_less_equal(source text, target text, max_d int) returns int
 </synopsis>
 
   <para>
@@ -177,7 +177,7 @@ test=# SELECT levenshtein_less_equal('extensive', 'exhaustive', 4);
   </indexterm>
 
 <synopsis>
-metaphone(text source, int max_output_length) returns text
+metaphone(source text, max_output_length int) returns text
 </synopsis>
 
   <para>
@@ -220,8 +220,8 @@ test=# SELECT metaphone('GUMBO', 4);
   </indexterm>
 
 <synopsis>
-dmetaphone(text source) returns text
-dmetaphone_alt(text source) returns text
+dmetaphone(source text) returns text
+dmetaphone_alt(source text) returns text
 </synopsis>
 
   <para>
@@ -292,20 +292,67 @@ test=# SELECT dmetaphone('gumbo');
   </para>
 
 <synopsis>
-daitch_mokotoff(text source) returns text[]
+daitch_mokotoff(source text) returns text[]
 </synopsis>
 
   <para>
    Since a Daitch-Mokotoff soundex code consists of only 6 digits,
    <literal>source</literal> should be preferably a single word or name.
-   The returned text array may be used directly in a GIN index, using the
-   <literal>&amp;&amp;</literal> operator for matching, see <xref linkend="gin"/>.
-   For more advanced queries, Full Text Search may be used, see
-   <xref linkend="textsearch"/>, and the example below.
   </para>
 
   <para>
-   Example:
+   Examples:
+  </para>
+
+<programlisting>
+SELECT daitch_mokotoff('George');
+ daitch_mokotoff
+-----------------
+ {595000}
+
+SELECT daitch_mokotoff('John');
+ daitch_mokotoff
+-----------------
+ {160000,460000}
+
+SELECT daitch_mokotoff('Bierschbach');
+                      daitch_mokotoff
+-----------------------------------------------------------
+ {794575,794574,794750,794740,745750,745740,747500,747400}
+
+SELECT daitch_mokotoff('Schwartzenegger');
+ daitch_mokotoff
+-----------------
+ {479465}
+</programlisting>
+
+  <para>
+   For matching of single names, the returned text array can be matched
+   directly using the <literal>&amp;&amp;</literal> operator. A GIN index may
+   be used for efficiency, see <xref linkend="gin"/> and the example
+   below:
+  </para>
+
+<programlisting>
+CREATE TABLE s (nm text);
+
+INSERT INTO s (nm) VALUES
+  ('Schwartzenegger'),
+  ('John'),
+  ('James'),
+  ('Steinman'),
+  ('Steinmetz');
+
+CREATE INDEX ix_s_dm ON s USING gin (daitch_mokotoff(nm)) WITH (fastupdate = off);
+
+SELECT * FROM s WHERE daitch_mokotoff(nm) &amp;&amp; daitch_mokotoff('Swartzenegger');
+SELECT * FROM s WHERE daitch_mokotoff(nm) &amp;&amp; daitch_mokotoff('Jane');
+SELECT * FROM s WHERE daitch_mokotoff(nm) &amp;&amp; daitch_mokotoff('Jens');
+</programlisting>
+
+  <para>
+   For indexing and matching of any number of names in any order, Full Text
+   Search may be used. See <xref linkend="textsearch"/> and the example below:
   </para>
 
 <programlisting>
@@ -319,21 +366,30 @@ CREATE OR REPLACE FUNCTION soundex_tsquery(v_name text) RETURNS tsquery AS $$
   FROM regexp_split_to_table(v_name, '\s+') AS n
 $$ LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE;
 
--- Note that searches could be more efficient with the tsvector in a separate column
--- (no recalculation on table row recheck).
 CREATE TABLE s (nm text);
 CREATE INDEX ix_s_txt ON s USING gin (soundex_tsvector(nm)) WITH (fastupdate = off);
 
-INSERT INTO s VALUES ('John Doe');
-INSERT INTO s VALUES ('Jane Roe');
-INSERT INTO s VALUES ('Public John Q.');
-INSERT INTO s VALUES ('George Best');
+INSERT INTO s (nm) VALUES
+  ('John Doe'),
+  ('Jane Roe'),
+  ('Public John Q.'),
+  ('George Best'),
+  ('John Yamson');
 
 SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('john');
 SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('jane doe');
 SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('john public');
 SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('besst, giorgio');
+SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('Jameson John');
 </programlisting>
+
+  <para>
+   Note that if it is desired to avoid recalculation of soundex codes on GIN
+   table row recheck, an index on a separate column may be used instead of an
+   index on an expression. A stored generated column may be used for this, see
+   <xref linkend="ddl-generated-columns"/>.
+  </para>
+
  </sect2>
 
 </sect1>
