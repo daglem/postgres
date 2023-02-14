@@ -335,6 +335,7 @@ SELECT daitch_mokotoff('Schwartzenegger');
 
 <programlisting>
 CREATE TABLE s (nm text);
+CREATE INDEX ix_s_dm ON s USING gin (daitch_mokotoff(nm)) WITH (fastupdate = off);
 
 INSERT INTO s (nm) VALUES
   ('Schwartzenegger'),
@@ -342,8 +343,6 @@ INSERT INTO s (nm) VALUES
   ('James'),
   ('Steinman'),
   ('Steinmetz');
-
-CREATE INDEX ix_s_dm ON s USING gin (daitch_mokotoff(nm)) WITH (fastupdate = off);
 
 SELECT * FROM s WHERE daitch_mokotoff(nm) &amp;&amp; daitch_mokotoff('Swartzenegger');
 SELECT * FROM s WHERE daitch_mokotoff(nm) &amp;&amp; daitch_mokotoff('Jane');
@@ -385,7 +384,7 @@ SELECT * FROM s WHERE soundex_tsvector(nm) @@ soundex_tsquery('Jameson John');
 
   <para>
    Note that if it is desired to avoid recalculation of soundex codes on GIN
-   table row recheck, an index on a separate column may be used instead of an
+   table row recheck, an index on a separate column can be used instead of an
    index on an expression. A stored generated column may be used for this, see
    <xref linkend="ddl-generated-columns"/>.
   </para>

@@ -1,11 +1,13 @@
 /*
  * Daitch-Mokotoff Soundex
  *
- * Copyright (c) 2021 Finance Norway
- * Author: Dag Lem <dag@nimrod.no>
+ * Copyright (c) 2023, PostgreSQL Global Development Group
  *
- * This implementation of the Daitch-Mokotoff Soundex System aims at high
- * performance.
+ * This module was originally sponsored by Finance Norway /
+ * Trafikkforsikringsforeningen, and implemented by Dag Lem <dag@nimrod.no>
+ *
+ * The implementation of the Daitch-Mokotoff Soundex System aims at correctness
+ * and high performance, and can be summarized as follows:
  *
  * - The processing of each phoneme is initiated by an O(1) table lookup.
  * - For phonemes containing more than one character, a coding tree is traversed
@@ -13,7 +15,7 @@
  * - The (alternate) soundex codes are produced digit by digit in-place in
  *   another tree structure.
  *
- *  References:
+ * References:
  *
  * https://www.avotaynu.com/soundex.htm
  * https://www.jewishgen.org/InfoFiles/Soundex.html
@@ -36,23 +38,6 @@
  *   744300 instead of 743000 as for "BEST".
  * - "J" is considered (only) a consonant in DaitchMokotoffSoundex.java
  * - "Y" is not considered a vowel in DaitchMokotoffSoundex.java
- *
- * Permission to use, copy, modify, and distribute this software and its
- * documentation for any purpose, without fee, and without a written agreement
- * is hereby granted, provided that the above copyright notice and this
- * paragraph and the following two paragraphs appear in all copies.
- *
- * IN NO EVENT SHALL THE AUTHOR OR DISTRIBUTORS BE LIABLE TO ANY PARTY FOR
- * DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING
- * LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS
- * DOCUMENTATION, EVEN IF THE AUTHOR OR DISTRIBUTORS HAVE BEEN ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- *
- * THE AUTHOR AND DISTRIBUTORS SPECIFICALLY DISCLAIM ANY WARRANTIES,
- * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
- * AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
- * ON AN "AS IS" BASIS, AND THE AUTHOR AND DISTRIBUTORS HAS NO OBLIGATIONS TO
- * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 */
 
 #include "postgres.h"
