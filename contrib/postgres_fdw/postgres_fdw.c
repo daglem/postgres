@@ -1517,7 +1517,7 @@ postgresBeginForeignScan(ForeignScanState *node, int eflags)
 	if (fsplan->scan.scanrelid > 0)
 		rtindex = fsplan->scan.scanrelid;
 	else
-		rtindex = bms_next_member(fsplan->fs_relids, -1);
+		rtindex = bms_next_member(fsplan->fs_base_relids, -1);
 	rte = exec_rt_fetch(rtindex, estate);
 
 	/* Get info about foreign table. */
@@ -2414,7 +2414,7 @@ find_modifytable_subplan(PlannerInfo *root,
 	{
 		ForeignScan *fscan = (ForeignScan *) subplan;
 
-		if (bms_is_member(rtindex, fscan->fs_relids))
+		if (bms_is_member(rtindex, fscan->fs_base_relids))
 			return fscan;
 	}
 
@@ -2838,8 +2838,8 @@ postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 		 * that setrefs.c won't update the string when flattening the
 		 * rangetable.  To find out what rtoffset was applied, identify the
 		 * minimum RT index appearing in the string and compare it to the
-		 * minimum member of plan->fs_relids.  (We expect all the relids in
-		 * the join will have been offset by the same amount; the Asserts
+		 * minimum member of plan->fs_base_relids.  (We expect all the relids
+		 * in the join will have been offset by the same amount; the Asserts
 		 * below should catch it if that ever changes.)
 		 */
 		minrti = INT_MAX;
@@ -2856,7 +2856,7 @@ postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 			else
 				ptr++;
 		}
-		rtoffset = bms_next_member(plan->fs_relids, -1) - minrti;
+		rtoffset = bms_next_member(plan->fs_base_relids, -1) - minrti;
 
 		/* Now we can translate the string */
 		relations = makeStringInfo();
@@ -2871,7 +2871,7 @@ postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 				char	   *refname;
 
 				rti += rtoffset;
-				Assert(bms_is_member(rti, plan->fs_relids));
+				Assert(bms_is_member(rti, plan->fs_base_relids));
 				rte = rt_fetch(rti, es->rtable);
 				Assert(rte->rtekind == RTE_RELATION);
 				/* This logic should agree with explain.c's ExplainTargetRel */
@@ -3345,9 +3345,9 @@ estimate_path_cost_size(PlannerInfo *root,
 			}
 
 			/* Get number of grouping columns and possible number of groups */
-			numGroupCols = list_length(root->parse->groupClause);
+			numGroupCols = list_length(root->processed_groupClause);
 			numGroups = estimate_num_groups(root,
-											get_sortgrouplist_exprs(root->parse->groupClause,
+											get_sortgrouplist_exprs(root->processed_groupClause,
 																	fpinfo->grouped_tlist),
 											input_rows, NULL, NULL);
 
@@ -3636,7 +3636,7 @@ adjust_foreign_grouping_path_cost(PlannerInfo *root,
 	 * pathkeys, adjust the costs with that function.  Otherwise, adjust the
 	 * costs by applying the same heuristic as for the scan or join case.
 	 */
-	if (!grouping_is_sortable(root->parse->groupClause) ||
+	if (!grouping_is_sortable(root->processed_groupClause) ||
 		!pathkeys_contained_in(pathkeys, root->group_pathkeys))
 	{
 		Path		sort_path;	/* dummy for result of cost_sort */
@@ -6415,7 +6415,11 @@ foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 		Index		sgref = get_pathtarget_sortgroupref(grouping_target, i);
 		ListCell   *l;
 
-		/* Check whether this expression is part of GROUP BY clause */
+		/*
+		 * Check whether this expression is part of GROUP BY clause.  Note we
+		 * check the whole GROUP BY clause not just processed_groupClause,
+		 * because we will ship all of it, cf. appendGroupByClause.
+		 */
 		if (sgref && get_sortgroupref_clause_noerr(sgref, query->groupClause))
 		{
 			TargetEntry *tle;
@@ -6518,10 +6522,8 @@ foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 									  expr,
 									  true,
 									  false,
-									  false,
 									  root->qual_security_level,
 									  grouped_rel->relids,
-									  NULL,
 									  NULL);
 			if (is_foreign_expr(root, grouped_rel, expr))
 				fpinfo->remote_conds = lappend(fpinfo->remote_conds, rinfo);

@@ -2050,9 +2050,9 @@ PhysicalConfirmReceivedLocation(XLogRecPtr lsn)
 
 	/*
 	 * One could argue that the slot should be saved to disk now, but that'd
-	 * be energy wasted - the worst lost information can do here is give us
-	 * wrong information in a statistics view - we'll just potentially be more
-	 * conservative in removing files.
+	 * be energy wasted - the worst thing lost information could cause here is
+	 * to give wrong information in a statistics view - we'll just potentially
+	 * be more conservative in removing files.
 	 */
 }
 
@@ -3275,7 +3275,7 @@ WalSndShmemInit(void)
 		MemSet(WalSndCtl, 0, WalSndShmemSize());
 
 		for (i = 0; i < NUM_SYNC_REP_WAIT_MODE; i++)
-			SHMQueueInit(&(WalSndCtl->SyncRepQueue[i]));
+			dlist_init(&(WalSndCtl->SyncRepQueue[i]));
 
 		for (i = 0; i < max_wal_senders; i++)
 		{

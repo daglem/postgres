@@ -17,15 +17,16 @@
 #include "utils/snapshot.h"
 #include "utils/timestamp.h"
 
+/* GUC variables */
 extern PGDLLIMPORT int logical_decoding_work_mem;
-extern PGDLLIMPORT int logical_decoding_mode;
+extern PGDLLIMPORT int logical_replication_mode;
 
-/* possible values for logical_decoding_mode */
+/* possible values for logical_replication_mode */
 typedef enum
 {
-	LOGICAL_DECODING_MODE_BUFFERED,
-	LOGICAL_DECODING_MODE_IMMEDIATE
-} LogicalDecodingMode;
+	LOGICAL_REP_MODE_BUFFERED,
+	LOGICAL_REP_MODE_IMMEDIATE
+} LogicalRepMode;
 
 /* an individual tuple, stored in one chunk of memory */
 typedef struct ReorderBufferTupleBuf
@@ -525,6 +526,12 @@ typedef void (*ReorderBufferStreamTruncateCB) (
 											   Relation relations[],
 											   ReorderBufferChange *change);
 
+/* update progress txn callback signature */
+typedef void (*ReorderBufferUpdateProgressTxnCB) (
+												  ReorderBuffer *rb,
+												  ReorderBufferTXN *txn,
+												  XLogRecPtr lsn);
+
 struct ReorderBuffer
 {
 	/*
@@ -587,6 +594,12 @@ struct ReorderBuffer
 	ReorderBufferStreamChangeCB stream_change;
 	ReorderBufferStreamMessageCB stream_message;
 	ReorderBufferStreamTruncateCB stream_truncate;
+
+	/*
+	 * Callback to be called when updating progress during sending data of a
+	 * transaction (and its subtransactions) to the output plugin.
+	 */
+	ReorderBufferUpdateProgressTxnCB update_progress_txn;
 
 	/*
 	 * Pointer that will be passed untouched to the callbacks.

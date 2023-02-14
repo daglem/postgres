@@ -849,7 +849,7 @@ LogicalParallelApplyLoop(shm_mq_handle *mqh)
 static void
 pa_shutdown(int code, Datum arg)
 {
-	SendProcSignal(MyLogicalRepWorker->apply_leader_pid,
+	SendProcSignal(MyLogicalRepWorker->leader_pid,
 				   PROCSIG_PARALLEL_APPLY_MESSAGE,
 				   InvalidBackendId);
 
@@ -932,7 +932,7 @@ ParallelApplyWorkerMain(Datum main_arg)
 	error_mqh = shm_mq_attach(mq, seg, NULL);
 
 	pq_redirect_to_shm_mq(seg, error_mqh);
-	pq_set_parallel_leader(MyLogicalRepWorker->apply_leader_pid,
+	pq_set_parallel_leader(MyLogicalRepWorker->leader_pid,
 						   InvalidBackendId);
 
 	MyLogicalRepWorker->last_send_time = MyLogicalRepWorker->last_recv_time =
@@ -950,7 +950,7 @@ ParallelApplyWorkerMain(Datum main_arg)
 	 * The parallel apply worker doesn't need to monopolize this replication
 	 * origin which was already acquired by its leader process.
 	 */
-	replorigin_session_setup(originid, MyLogicalRepWorker->apply_leader_pid);
+	replorigin_session_setup(originid, MyLogicalRepWorker->leader_pid);
 	replorigin_session_origin = originid;
 	CommitTransactionCommand();
 
@@ -1149,6 +1149,13 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 	Assert(!IsTransactionState());
 	Assert(!winfo->serialize_changes);
 
+	/*
+	 * We don't try to send data to parallel worker for 'immediate' mode. This
+	 * is primarily used for testing purposes.
+	 */
+	if (unlikely(logical_replication_mode == LOGICAL_REP_MODE_IMMEDIATE))
+		return false;
+
 /*
  * This timeout is a bit arbitrary but testing revealed that it is sufficient
  * to send the message unless the parallel apply worker is waiting on some
@@ -1174,8 +1181,7 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 		/* Wait before retrying. */
 		rc = WaitLatch(MyLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
-					   SHM_SEND_RETRY_INTERVAL_MS,
-					   WAIT_EVENT_LOGICAL_PARALLEL_APPLY_STATE_CHANGE);
+					   SHM_SEND_RETRY_INTERVAL_MS, WAIT_EVENT_MQ_SEND);
 
 		if (rc & WL_LATCH_SET)
 		{
@@ -1187,12 +1193,7 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 			startTime = GetCurrentTimestamp();
 		else if (TimestampDifferenceExceeds(startTime, GetCurrentTimestamp(),
 											SHM_SEND_TIMEOUT_MS))
-		{
-			ereport(LOG,
-					(errmsg("logical replication apply worker will serialize the remaining changes of remote transaction %u to a file",
-							winfo->shared->xid)));
 			return false;
-		}
 	}
 }
 
@@ -1206,6 +1207,10 @@ void
 pa_switch_to_partial_serialize(ParallelApplyWorkerInfo *winfo,
 							   bool stream_locked)
 {
+	ereport(LOG,
+			(errmsg("logical replication apply worker will serialize the remaining changes of remote transaction %u to a file",
+					winfo->shared->xid)));
+
 	/*
 	 * The parallel apply worker could be stuck for some reason (say waiting
 	 * on some lock by other backend), so stop trying to send data directly to

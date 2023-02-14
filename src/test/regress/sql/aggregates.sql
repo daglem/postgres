@@ -492,14 +492,24 @@ drop table p_t1;
 -- Test GROUP BY matching of join columns that are type-coerced due to USING
 --
 
-create temp table t1(f1 int, f2 bigint);
-create temp table t2(f1 bigint, f22 bigint);
+create temp table t1(f1 int, f2 int);
+create temp table t2(f1 bigint, f2 oid);
 
 select f1 from t1 left join t2 using (f1) group by f1;
 select f1 from t1 left join t2 using (f1) group by t1.f1;
 select t1.f1 from t1 left join t2 using (f1) group by t1.f1;
 -- only this one should fail:
 select t1.f1 from t1 left join t2 using (f1) group by f1;
+
+-- check case where we have to inject nullingrels into coerced join alias
+select f1, count(*) from
+t1 x(x0,x1) left join (t1 left join t2 using(f1)) on (x0 = 0)
+group by f1;
+
+-- same, for a RelabelType coercion
+select f2, count(*) from
+t1 x(x0,x1) left join (t1 left join t2 using(f2)) on (x0 = 0)
+group by f2;
 
 drop table t1, t2;
 
@@ -556,6 +566,10 @@ select
   sum(unique1 order by two, random(), random() + 1)
 from tenk1
 group by ten;
+
+-- Ensure consecutive NULLs are properly treated as distinct from each other
+select array_agg(distinct val)
+from (select null as val from generate_series(1, 2));
 
 -- Ensure no ordering is requested when enable_presorted_aggregate is off
 set enable_presorted_aggregate to off;
@@ -716,6 +730,69 @@ select string_agg(v, NULL) from bytea_test_table;
 select string_agg(v, decode('ee', 'hex')) from bytea_test_table;
 
 drop table bytea_test_table;
+
+-- Test parallel string_agg and array_agg
+create table pagg_test (x int, y int);
+insert into pagg_test
+select (case x % 4 when 1 then null else x end), x % 10
+from generate_series(1,5000) x;
+
+set parallel_setup_cost TO 0;
+set parallel_tuple_cost TO 0;
+set parallel_leader_participation TO 0;
+set min_parallel_table_scan_size = 0;
+set bytea_output = 'escape';
+set max_parallel_workers_per_gather = 2;
+
+-- create a view as we otherwise have to repeat this query a few times.
+create view v_pagg_test AS
+select
+	y,
+	min(t) AS tmin,max(t) AS tmax,count(distinct t) AS tndistinct,
+	min(b) AS bmin,max(b) AS bmax,count(distinct b) AS bndistinct,
+	min(a) AS amin,max(a) AS amax,count(distinct a) AS andistinct,
+	min(aa) AS aamin,max(aa) AS aamax,count(distinct aa) AS aandistinct
+from (
+	select
+		y,
+		unnest(regexp_split_to_array(a1.t, ','))::int AS t,
+		unnest(regexp_split_to_array(a1.b::text, ',')) AS b,
+		unnest(a1.a) AS a,
+		unnest(a1.aa) AS aa
+	from (
+		select
+			y,
+			string_agg(x::text, ',') AS t,
+			string_agg(x::text::bytea, ',') AS b,
+			array_agg(x) AS a,
+			array_agg(ARRAY[x]) AS aa
+		from pagg_test
+		group by y
+	) a1
+) a2
+group by y;
+
+-- Ensure results are correct.
+select * from v_pagg_test order by y;
+
+-- Ensure parallel aggregation is actually being used.
+explain (costs off) select * from v_pagg_test order by y;
+
+set max_parallel_workers_per_gather = 0;
+
+-- Ensure results are the same without parallel aggregation.
+select * from v_pagg_test order by y;
+
+-- Clean up
+reset max_parallel_workers_per_gather;
+reset bytea_output;
+reset min_parallel_table_scan_size;
+reset parallel_leader_participation;
+reset parallel_tuple_cost;
+reset parallel_setup_cost;
+
+drop view v_pagg_test;
+drop table pagg_test;
 
 -- FILTER tests
 

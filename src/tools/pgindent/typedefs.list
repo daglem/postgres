@@ -1090,11 +1090,13 @@ HeadlineJsonState
 HeadlineParsedText
 HeadlineWordEntry
 HeapCheckContext
+HeapPageFreeze
 HeapScanDesc
 HeapTuple
 HeapTupleData
 HeapTupleFields
 HeapTupleForceOption
+HeapTupleFreeze
 HeapTupleHeader
 HeapTupleHeaderData
 HeapTupleTableSlot
@@ -1106,7 +1108,10 @@ ID
 INFIX
 INT128
 INTERFACE_INFO
+IOContext
 IOFuncSelector
+IOObject
+IOOp
 IPCompareMethod
 ITEM
 IV
@@ -1456,7 +1461,6 @@ LogicalDecodeStreamStopCB
 LogicalDecodeStreamTruncateCB
 LogicalDecodeTruncateCB
 LogicalDecodingContext
-LogicalDecodingMode
 LogicalErrorCallbackState
 LogicalOutputPluginInit
 LogicalOutputPluginWriterPrepareWrite
@@ -1466,6 +1470,7 @@ LogicalRepBeginData
 LogicalRepCommitData
 LogicalRepCommitPreparedTxnData
 LogicalRepCtxStruct
+LogicalRepMode
 LogicalRepMsgType
 LogicalRepPartMapEntry
 LogicalRepPreparedTxnData
@@ -1846,7 +1851,6 @@ PROCESS_INFORMATION
 PROCLOCK
 PROCLOCKTAG
 PROC_HDR
-PROC_QUEUE
 PSID
 PSID_AND_ATTRIBUTES
 PSQL_COMP_CASE
@@ -2016,6 +2020,7 @@ PgStatShared_Common
 PgStatShared_Database
 PgStatShared_Function
 PgStatShared_HashEntry
+PgStatShared_IO
 PgStatShared_Relation
 PgStatShared_ReplSlot
 PgStatShared_SLRU
@@ -2025,6 +2030,7 @@ PgStat_ArchiverStats
 PgStat_BackendFunctionEntry
 PgStat_BackendSubEntry
 PgStat_BgWriterStats
+PgStat_BktypeIO
 PgStat_CheckpointerStats
 PgStat_Counter
 PgStat_EntryRef
@@ -2033,6 +2039,7 @@ PgStat_FetchConsistency
 PgStat_FunctionCallUsage
 PgStat_FunctionCounts
 PgStat_HashKey
+PgStat_IO
 PgStat_Kind
 PgStat_KindInfo
 PgStat_LocalState
@@ -2310,6 +2317,7 @@ ReorderBufferToastEnt
 ReorderBufferTupleBuf
 ReorderBufferTupleCidEnt
 ReorderBufferTupleCidKey
+ReorderBufferUpdateProgressTxnCB
 ReorderTuple
 RepOriginId
 ReparameterizeForeignPathByChild_function
@@ -2378,7 +2386,6 @@ SERIALIZABLEXIDTAG
 SERVICE_STATUS
 SERVICE_STATUS_HANDLE
 SERVICE_TABLE_ENTRY
-SHM_QUEUE
 SID_AND_ATTRIBUTES
 SID_IDENTIFIER_AUTHORITY
 SID_NAME_USE
@@ -3371,6 +3378,7 @@ intset_internal_node
 intset_leaf_node
 intset_node
 intvKEY
+io_stat_col
 itemIdCompact
 itemIdCompactData
 iterator
@@ -3840,6 +3848,7 @@ xl_hash_vacuum_one_page
 xl_heap_confirm
 xl_heap_delete
 xl_heap_freeze_page
+xl_heap_freeze_plan
 xl_heap_freeze_tuple
 xl_heap_header
 xl_heap_inplace

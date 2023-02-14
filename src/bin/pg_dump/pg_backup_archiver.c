@@ -538,9 +538,14 @@ RestoreArchive(Archive *AHX)
 				 */
 				if (*te->dropStmt != '\0')
 				{
-					if (!ropt->if_exists)
+					if (!ropt->if_exists ||
+						strncmp(te->dropStmt, "--", 2) == 0)
 					{
-						/* No --if-exists?	Then just use the original */
+						/*
+						 * Without --if-exists, or if it's just a comment (as
+						 * happens for the public schema), print the dropStmt
+						 * as-is.
+						 */
 						ahprintf(AH, "%s", te->dropStmt);
 					}
 					else
@@ -2358,8 +2363,7 @@ WriteDataChunks(ArchiveHandle *AH, ParallelState *pstate)
 		}
 
 		if (ntes > 1)
-			qsort((void *) tes, ntes, sizeof(TocEntry *),
-				  TocEntrySizeCompare);
+			qsort(tes, ntes, sizeof(TocEntry *), TocEntrySizeCompare);
 
 		for (int i = 0; i < ntes; i++)
 			DispatchJobForTocEntry(AH, pstate, tes[i], ACT_DUMP,
@@ -3779,7 +3783,7 @@ ReadHead(ArchiveHandle *AH)
 
 #ifndef HAVE_LIBZ
 	if (AH->compression_spec.algorithm == PG_COMPRESSION_GZIP)
-		pg_fatal("archive is compressed, but this installation does not support compression");
+		pg_log_warning("archive is compressed, but this installation does not support compression -- no data will be available");
 #endif
 
 	if (AH->version >= K_VERS_1_4)

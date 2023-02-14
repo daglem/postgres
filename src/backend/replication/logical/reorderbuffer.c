@@ -210,7 +210,7 @@ int			logical_decoding_work_mem;
 static const Size max_changes_in_memory = 4096; /* XXX for restore only */
 
 /* GUC variable */
-int			logical_decoding_mode = LOGICAL_DECODING_MODE_BUFFERED;
+int			logical_replication_mode = LOGICAL_REP_MODE_BUFFERED;
 
 /* ---------------------------------------
  * primary reorderbuffer support routines
@@ -657,7 +657,7 @@ ReorderBufferTXNByXid(ReorderBuffer *rb, TransactionId xid, bool create,
 	/* search the lookup table */
 	ent = (ReorderBufferTXNByIdEnt *)
 		hash_search(rb->by_txn,
-					(void *) &xid,
+					&xid,
 					create ? HASH_ENTER : HASH_FIND,
 					&found);
 	if (found)
@@ -1581,10 +1581,7 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		dclist_delete_from(&rb->catchange_txns, &txn->catchange_node);
 
 	/* now remove reference from buffer */
-	hash_search(rb->by_txn,
-				(void *) &txn->xid,
-				HASH_REMOVE,
-				&found);
+	hash_search(rb->by_txn,	&txn->xid, HASH_REMOVE,	&found);
 	Assert(found);
 
 	/* remove entries spilled to disk */
@@ -1762,10 +1759,7 @@ ReorderBufferBuildTupleCidHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
 						&key.tid);
 
 		ent = (ReorderBufferTupleCidEnt *)
-			hash_search(txn->tuplecid_hash,
-						(void *) &key,
-						HASH_ENTER,
-						&found);
+			hash_search(txn->tuplecid_hash, &key, HASH_ENTER, &found);
 		if (!found)
 		{
 			ent->cmin = change->data.tuplecid.cmin;
@@ -2106,6 +2100,8 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	PG_TRY();
 	{
 		ReorderBufferChange *change;
+		int			changes_count = 0;	/* used to accumulate the number of
+										 * changes */
 
 		if (using_subtxn)
 			BeginInternalSubTransaction(streaming ? "stream" : "replay");
@@ -2445,6 +2441,24 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
 					elog(ERROR, "tuplecid value in changequeue");
 					break;
+			}
+
+			/*
+			 * It is possible that the data is not sent to downstream for a
+			 * long time either because the output plugin filtered it or there
+			 * is a DDL that generates a lot of data that is not processed by
+			 * the plugin. So, in such cases, the downstream can timeout. To
+			 * avoid that we try to send a keepalive message if required.
+			 * Trying to send a keepalive message after every change has some
+			 * overhead, but testing showed there is no noticeable overhead if
+			 * we do it after every ~100 changes.
+			 */
+#define CHANGES_THRESHOLD 100
+
+			if (++changes_count >= CHANGES_THRESHOLD)
+			{
+				rb->update_progress_txn(rb, txn, change->lsn);
+				changes_count = 0;
 			}
 		}
 
@@ -3552,8 +3566,8 @@ ReorderBufferLargestStreamableTopTXN(ReorderBuffer *rb)
  * pick the largest (sub)transaction at-a-time to evict and spill its changes to
  * disk or send to the output plugin until we reach under the memory limit.
  *
- * If logical_decoding_mode is set to "immediate", stream or serialize the changes
- * immediately.
+ * If logical_replication_mode is set to "immediate", stream or serialize the
+ * changes immediately.
  *
  * XXX At this point we select the transactions until we reach under the memory
  * limit, but we might also adapt a more elaborate eviction strategy - for example
@@ -3566,15 +3580,15 @@ ReorderBufferCheckMemoryLimit(ReorderBuffer *rb)
 	ReorderBufferTXN *txn;
 
 	/*
-	 * Bail out if logical_decoding_mode is buffered and we haven't exceeded
+	 * Bail out if logical_replication_mode is buffered and we haven't exceeded
 	 * the memory limit.
 	 */
-	if (logical_decoding_mode == LOGICAL_DECODING_MODE_BUFFERED &&
+	if (logical_replication_mode == LOGICAL_REP_MODE_BUFFERED &&
 		rb->size < logical_decoding_work_mem * 1024L)
 		return;
 
 	/*
-	 * If logical_decoding_mode is immediate, loop until there's no change.
+	 * If logical_replication_mode is immediate, loop until there's no change.
 	 * Otherwise, loop until we reach under the memory limit. One might think
 	 * that just by evicting the largest (sub)transaction we will come under
 	 * the memory limit based on assumption that the selected transaction is
@@ -3584,7 +3598,7 @@ ReorderBufferCheckMemoryLimit(ReorderBuffer *rb)
 	 * change.
 	 */
 	while (rb->size >= logical_decoding_work_mem * 1024L ||
-		   (logical_decoding_mode == LOGICAL_DECODING_MODE_IMMEDIATE &&
+		   (logical_replication_mode == LOGICAL_REP_MODE_IMMEDIATE &&
 			rb->size > 0))
 	{
 		/*
@@ -4653,10 +4667,7 @@ ReorderBufferToastAppendChunk(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	Assert(!isnull);
 
 	ent = (ReorderBufferToastEnt *)
-		hash_search(txn->toast_hash,
-					(void *) &chunk_id,
-					HASH_ENTER,
-					&found);
+		hash_search(txn->toast_hash, &chunk_id, HASH_ENTER, &found);
 
 	if (!found)
 	{
@@ -4811,7 +4822,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		 */
 		ent = (ReorderBufferToastEnt *)
 			hash_search(txn->toast_hash,
-						(void *) &toast_pointer.va_valueid,
+						&toast_pointer.va_valueid,
 						HASH_FIND,
 						NULL);
 		if (ent == NULL)
@@ -5053,10 +5064,7 @@ ApplyLogicalMappingFile(HTAB *tuplecid_data, Oid relid, const char *fname)
 
 
 		ent = (ReorderBufferTupleCidEnt *)
-			hash_search(tuplecid_data,
-						(void *) &key,
-						HASH_FIND,
-						NULL);
+			hash_search(tuplecid_data, &key, HASH_FIND, NULL);
 
 		/* no existing mapping, no need to update */
 		if (!ent)
@@ -5067,10 +5075,7 @@ ApplyLogicalMappingFile(HTAB *tuplecid_data, Oid relid, const char *fname)
 						&key.tid);
 
 		new_ent = (ReorderBufferTupleCidEnt *)
-			hash_search(tuplecid_data,
-						(void *) &key,
-						HASH_ENTER,
-						&found);
+			hash_search(tuplecid_data, &key, HASH_ENTER, &found);
 
 		if (found)
 		{
@@ -5249,10 +5254,7 @@ ResolveCminCmaxDuringDecoding(HTAB *tuplecid_data,
 
 restart:
 	ent = (ReorderBufferTupleCidEnt *)
-		hash_search(tuplecid_data,
-					(void *) &key,
-					HASH_FIND,
-					NULL);
+		hash_search(tuplecid_data, &key, HASH_FIND, NULL);
 
 	/*
 	 * failed to find a mapping, check whether the table was rewritten and
